@@ -1,20 +1,14 @@
 """
-Utility helpers used across the project.
+Shared utility helpers used across the project.
 """
 
-from .elo import actual_score_from_margin
 import matplotlib.pyplot as plt
 
-def home_field_boost(base_rating: float, boost: float = 45.0) -> float:
-    """
-    Return the home team rating with a home‑field advantage added.
-    """
-    return base_rating + boost
 
-def plot_ratings(ratings: dict[str, float], title: str = "Team Ratings"):
+def plot_ratings(ratings: dict, title: str = "Team Ratings") -> None:
     """
     Simple line plot of team ratings.
-    `ratings` is a dict mapping team name → rating.
+    `ratings` is a dict mapping team name -> rating.
     """
     teams = list(ratings.keys())
     vals = [ratings[t] for t in teams]
