@@ -95,6 +95,65 @@ These are the **most predictive features** for college football. They come from 
 - **Penalty yardage per game**
 - **Time of possession**
 
+#### Weighted EPA / Contextual Efficiency
+
+Raw EPA treats all plays equally, but a play in the 4th quarter with 2 minutes left and a 7-point deficit is far more important than a garbage-time play in the 3rd quarter. Weighting EPA by game context captures **performance quality when it matters** — a signal that most public models ignore.
+
+**Weighting dimensions:**
+
+| Dimension | Weighting | Rationale |
+|-----------|-----------|-----------|
+| **Game context** | Higher weight in 3rd/4th quarter | These plays decide games |
+| **Score differential** | Higher weight when game is within 10 points | Garbage-time EPA is noise |
+| **Situational importance** | Higher weight in red zone, 3rd/4th down, goal line | Higher leverage situations |
+| **Opponent strength** | Higher weight against stronger opponents | Performing well against bad teams is less informative |
+
+**Concrete features to compute:**
+
+| Feature | Description | Formula |
+|---------|-------------|---------|
+| **Weighted EPA per play** | EPA × importance weight, averaged | `sum(EPA × weight) / count` |
+| **Clutch EPA** | EPA from games within 7 points in the 4th quarter | Filter plays by score diff ≤ 7 AND quarter = 4 |
+| **Leverage EPA** | EPA weighted by game importance | `sum(EPA × weight) / sum(weight)` |
+| **Late-game success rate** | Success rate in final 5 minutes, score within 10 | Filter plays by time ≤ 5:00 AND score diff ≤ 10 |
+| **Red zone leverage EPA** | EPA weighted by red zone importance | `EPA × 1.3` for all plays inside the 20 |
+
+**Weighting function (reference implementation):**
+
+```python
+def epa_weight(play, game_state):
+    """Weight EPA by how important the play was."""
+    weight = 1.0
+    
+    # Game context: 4th quarter matters more
+    if game_state.quarter == 4:
+        weight *= 1.3
+    elif game_state.quarter == 3:
+        weight *= 1.1
+    
+    # Clutch: closer games matter more
+    score_diff = abs(game_state.home_score - game_state.away_score)
+    if score_diff <= 7:
+        weight *= 1.4
+    elif score_diff <= 14:
+        weight *= 1.1
+    
+    # Situational: red zone and 3rd/4th down
+    if game_state.yard_line <= 20:  # red zone
+        weight *= 1.3
+    if game_state.down in [3, 4] and game_state.yards_to_go <= 4:
+        weight *= 1.2
+    
+    return weight
+```
+
+**Why this matters:**
+- **Clutch performance** is a real skill — some teams elevate in important moments, others fold
+- **EPA already encodes game state** (down, distance, field position, score), but doesn't weight *when* those situations occur
+- A team that accumulates EPA on meaningless drives but fails in the red zone late in close games is fundamentally different from a team that's efficient everywhere
+
+**Data requirements:** Play-by-play data with game state (score, quarter, time remaining) — CFBD paid tier or SportsDataverse.
+
 ### 2.4 Recruiting Features
 
 | Feature | Description |
@@ -107,13 +166,55 @@ These are the **most predictive features** for college football. They come from 
 
 ### 2.5 Coaching & Roster Features
 
-| Feature | Description |
+Roster-derived features capture **structural team factors** that EPA and ratings often miss or react to slowly. A team losing 3+ OL starters has a rough year even if the skill players are the same — but EPA won't reflect that until they actually play badly.
+
+#### Coaching Features
+
+|| Feature | Description |
 |---------|-------------|
 | Head coach experience | Years in current role, career win % |
 | Offensive/Defensive coordinator | Tenure, scheme type |
-| Quarterback experience | Returning vs. new starting QB |
-| Offensive line experience | Returning starts, snap % |
-| Injuries | Key player absences (if available) |
+| Coordinator continuity | Same OC/DC from prior year? (boolean) |
+| Coaching turnover | New head coach in first year? |
+
+#### Roster-Derived Features
+
+These are some of the most predictive features you can add — they tell you about team **structure** before the games even happen.
+
+| Feature | Description | Signal |
+|---------|-------------|--------|
+| **OL returning experience** | % of OL snaps returned from prior year | Biggest roster predictor — losing 3+ OL starters = rough year |
+| **OL average age / weight** | Physical profile of the line | 300+ lb LT vs 270 lb LT changes dynamics vs elite pass rushers |
+| **OL star returners** | Number of returning All-Conference OL | Quality matters as much as quantity |
+| **Skill position turnover** | % of receiving/rushing yards returned | Losing your top 2 WRs is a bigger hit than losing a backup RB |
+| **QB experience** | Returning starter vs. transfer vs. freshman | Returning starter is ~3-5% more accurate predictor than raw EPA |
+| **DL experience** | Returning DL snaps, especially interior rushers | Interior pressure drives pass rush more than edge speed |
+| **Portal net impact** | # transfers in minus # transfers out | Net positive portal class = roster upgrade |
+| **Returning production %** | % of offensive/defensive yards and TDs returned | The single best roster turnover metric |
+| **Depth chart changes** | # of position changes from prior year | Instability at key positions = growing pains |
+| **Injuries (active)** | Key player absences (if available) | Missing a starting QB or LB is a big deal |
+
+**Highest-signal roster features (start here):**
+
+1. **Returning production %** — easiest to get, very predictive
+2. **QB experience** — returning starter flag, very high signal
+3. **OL returning experience** — slightly harder to get, but extremely predictive
+
+**Data sources for roster features:**
+
+| Source | What You Get | Access |
+|--------|-------------|--------|
+| **247Sports / On3** | Roster lists, recruiting rankings, transfer tracker, player bios | Paid API / scraping |
+| **ESPN** | Depth charts, player bios, injury reports | Free (scraping) |
+| **CFBD** | Recruiting rankings, some roster data | Free tier limited, paid full |
+| **Team websites** | Official depth charts, roster lists | Free (scraping) |
+| **Sports-Reference** | Returning production data | Free (scraping) |
+
+**Why roster features work:**
+- **EPA doesn't know** a team's QB is a freshman until they play badly — roster data tells you *before* the season
+- **Size matters** in college football — a massive OL dominates at the point of attack, even if EPA doesn't reflect it yet
+- **Roster turnover is a lagging indicator** — EPA reacts to results, roster data predicts them
+- **Chemistry matters** — a new OL unit needs time to develop, even if the talent level is similar
 
 ### 2.6 Schedule & Context Features
 
@@ -166,11 +267,13 @@ Raw Game Data
 ┌─────────────────────────────────┐
 │ 1. Compute per-game stats       │  ← score differential, total points
 │ 2. Compute per-drive/play stats │  ← EPA, success rate, explosiveness
-│ 3. Aggregate to team level      │  ← rolling averages, season totals
-│ 4. Add opponent context         │  ← opponent-adjusted metrics
-│ 5. Add ratings                  │  ← Elo, SP+, FEI, FPI
-│ 6. Add betting lines            │  ← spread, O/U, moneyline
-│ 7. Add context                  │  ← rest, travel, weather, rivalry
+│ 3. Compute weighted EPA         │  ← clutch EPA, leverage EPA (NEW)
+│ 4. Aggregate to team level      │  ← rolling averages, season totals
+│ 5. Add opponent context         │  ← opponent-adjusted metrics
+│ 6. Add ratings                  │  ← Elo, SP+, FEI, FPI
+│ 7. Add betting lines            │  ← spread, O/U, moneyline
+│ 8. Add roster features          │  ← OL experience, QB status (NEW)
+│ 9. Add context                  │  ← rest, travel, weather, rivalry
 └─────────────────────────────────┘
     │
     ▼
@@ -252,9 +355,11 @@ If you want to get started immediately with no cost:
 1. **Get a CFBD API key** (free tier) and pull 2020-2024 team stats + EPA/PPA
 2. **Add betting lines** from CFBD or The Odds API
 3. **Engineer rolling features** (3-game, 5-game, 10-game windows)
-4. **Build a LightGBM model** — it handles mixed feature types well and is fast to train
-5. **Evaluate against Elo baseline** — track accuracy, log-loss, Brier score
-6. **Iterate** — add recruiting, weather, and schedule features
+4. **Build Weighted EPA** — re-weight existing EPA by game context (clutch, leverage, late-game)
+5. **Build a LightGBM model** — it handles mixed feature types well and is fast to train
+6. **Evaluate against Elo baseline** — track accuracy, log-loss, Brier score
+7. **Add roster features** — start with returning production % and QB experience
+8. **Iterate** — add OL experience, DL experience, portal impact, weather, and schedule features
 
 ---
 

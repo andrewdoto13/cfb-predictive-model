@@ -68,8 +68,9 @@ When adding new models, follow the same interface pattern as `EloModel` in `src/
 - **Basic**: score differential, total points, margin of victory
 - **Rating-based**: Elo, SP+, FEI, FPI, Sagarin, DRR
 - **Advanced (play-by-play)**: EPA/PPA, success rate, explosiveness, drive efficiency
+- **Weighted EPA**: clutch EPA, leverage EPA, late-game success rate, contextual efficiency
 - **Recruiting**: class ranking, returning production, star count, portal impact
-- **Coaching/roster**: experience, coordinator tenure, QB status, injuries
+- **Coaching/roster**: experience, coordinator tenure, QB status, OL/DL experience, portal impact, injuries
 - **Schedule/context**: SOS, rest days, travel, weather, rivalry, bye week
 - **Betting market**: spread, over/under, moneyline, line movement
 - **Temporal**: rolling EPA, rolling success rate, momentum, week number
